@@ -16,7 +16,7 @@ Arduino_DataBus *bus = new Arduino_ESP32SPI(TFT_DC, TFT_CS, TFT_SCLK, TFT_MOSI, 
 Arduino_GFX *panel = new Arduino_ST7789(bus, TFT_RST, 1, true, 135, 240, 52, 40, 53, 40);
 Arduino_Canvas *gfx = new Arduino_Canvas(240, 135, panel);
 
-uint16_t BG, CLAY, DIM, POLE;
+uint16_t BG, CLAY, DIM, POLE, APPLE_RED, LEAF;
 uint16_t CONF[5];   // confetti palette
 
 // ---- Claw'd solid body (16 x 11); eyes punched separately ----
@@ -126,12 +126,39 @@ Pose animNap(float t) {
   Pose p; p.eyesClosed = true; p.sy = 1 + 0.03f * sinf(t * 1.4f); p.oy = 2 * sinf(t * 1.4f);
   return p;
 }
+Pose animWave(float t) {                 // waves hello, looking toward the hand
+  Pose p; p.oy = 2 * sinf(t * 2.5f); p.lean = 4 * sinf(t * 2.5f); p.eyeDX = 1;
+  return p;
+}
+// shared apple choreography: which side, where, and progress
+void applePlan(float t, float &u, int &dir, float &startX, float &appleX) {
+  const float P = 3.2f;
+  u = fmodf(t, P) / P;
+  dir = (((int)(t / P)) & 1) ? -1 : 1;
+  appleX = dir * 52; startX = -dir * 40;
+}
+Pose animApple(float t) {                // scuttles over and eats a dropped apple
+  float u, startX, appleX; int dir; applePlan(t, u, dir, startX, appleX);
+  Pose p; p.eyeDX = dir;
+  if (u < 0.30f) { p.ox = startX; p.oy = 2 * sinf(t * 4); }
+  else if (u < 0.62f) { float v = (u - 0.30f) / 0.32f; p.ox = startX + (appleX - startX) * easeIO(v);
+                        p.legSet = ((int)(t * 8)) & 1; p.oy = -2 * fabsf(sinf(t * 8)); }
+  else if (u < 0.72f) { p.ox = appleX; }
+  else { p.ox = appleX; p.oy = -9 * fabsf(sinf((u - 0.72f) * 32)); }   // happy hops
+  return p;
+}
+Pose animSpin(float t) {                 // turns around in place
+  Pose p; float c = cosf(t * 3.0f);
+  p.sx = fmaxf(0.12f, fabsf(c)); p.eyesClosed = (c < 0); p.oy = 2 * sinf(t * 2);
+  return p;
+}
 
-const int NUM = 6;
-const char *NAMES[NUM] = {"WALK", "STOMP", "FLAG", "GYM", "LOOK", "NAP"};
+const int NUM = 9;
+const char *NAMES[NUM] = {"WALK", "STOMP", "FLAG", "GYM", "LOOK", "NAP", "WAVE", "APPLE", "SPIN"};
 Pose buildPose(int i, float t) {
   switch (i) { case 0: return animWalk(t); case 1: return animStomp(t); case 2: return animFlag(t);
-               case 3: return animGym(t);  case 4: return animLook(t);  default: return animNap(t); }
+               case 3: return animGym(t);  case 4: return animLook(t);  case 5: return animNap(t);
+               case 6: return animWave(t); case 7: return animApple(t); default: return animSpin(t); }
 }
 
 // ---------- props ----------
@@ -174,6 +201,28 @@ void drawDumbbell(float t) {
   gfx->fillRect(cx + 18, y, 8, 16, DIM);
   gfx->fillRect(cx - 18, y + 6, 36, 4, POLE);
 }
+void drawHand(float t) {                      // waving hand on a swinging arm
+  Pose p = animWave(t); float left, top, cw, ch; spriteBox(p, left, top, cw, ch);
+  float hx = left + 15 * cw, hy = top + 4 * ch;
+  float ang = -0.5f + 0.7f * sinf(t * 5.0f);  // swing from the shoulder
+  float L = 34;
+  for (float s = 0; s <= 1.0f; s += 0.12f) {  // arm
+    float x = hx + L * s * sinf(ang), y = hy - L * s * cosf(ang);
+    gfx->fillCircle(lroundf(x), lroundf(y), 4, CLAY);
+  }
+  float tx = hx + L * sinf(ang), ty = hy - L * cosf(ang);
+  gfx->fillCircle(lroundf(tx), lroundf(ty), 7, CLAY);   // hand
+}
+void drawApple(float t) {
+  float u, startX, appleX; int dir; applePlan(t, u, dir, startX, appleX);
+  if (u >= 0.70f) return;                      // eaten
+  float groundY = FEET_Y - 16;
+  float ay = (u < 0.30f) ? (-12 + (groundY + 12) * easeIO(u / 0.30f)) : groundY;  // fall then rest
+  int ax = lroundf(CX + appleX);
+  gfx->fillCircle(ax, lroundf(ay), 7, APPLE_RED);
+  gfx->fillRect(ax - 1, lroundf(ay) - 11, 2, 5, DIM);   // stem
+  gfx->fillRect(ax + 1, lroundf(ay) - 11, 4, 3, LEAF);  // leaf
+}
 
 int animIdx = 0;
 float tAnim = 0, tSwitch = 0;
@@ -194,6 +243,8 @@ void setup() {
   CONF[2] = gfx->color565(0x5A, 0xC8, 0xC8);  // teal
   CONF[3] = gfx->color565(0xFF, 0xFF, 0xFF);  // white
   CONF[4] = gfx->color565(0xE0, 0x6C, 0x9A);  // pink
+  APPLE_RED = gfx->color565(0xD8, 0x36, 0x2A);
+  LEAF      = gfx->color565(0x5C, 0xA8, 0x4E);
 
   Serial.println("clawd official-anim ready");
 }
@@ -212,6 +263,8 @@ void loop() {
   drawClawd(buildPose(animIdx, tAnim));
   if (animIdx == 1) drawConfetti(tAnim);
   if (animIdx == 3) drawDumbbell(tAnim);
+  if (animIdx == 6) drawHand(tAnim);
+  if (animIdx == 7) drawApple(tAnim);
 
   gfx->setTextSize(1); gfx->setTextColor(DIM); gfx->setCursor(4, 4);
   gfx->print(NAMES[animIdx]);
