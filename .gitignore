@@ -1,0 +1,13 @@
+# Arduino / arduino-cli build output
+build/
+*.bin
+*.elf
+*.hex
+*.map
+
+# OS cruft
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
